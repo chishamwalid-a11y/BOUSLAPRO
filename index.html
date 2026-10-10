@@ -520,7 +520,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
         <input class="inp" id="lgName" type="text" placeholder="اكتب اسمك" autocomplete="name">
       </div>
       <div class="field">
-        <label class="f" for="lgPass">كلمة المرور (للمدراء فقط)</label>
+        <label class="f" for="lgPass">كلمة المرور</label>
         <input class="inp" id="lgPass" type="password" placeholder="••••" autocomplete="current-password">
       </div>
       <div class="row2">
@@ -528,7 +528,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
         <button class="btn blue" id="lgMember" type="button">دخول كعضو</button>
       </div>
       <div class="hr"></div>
-      <div class="complete">✔️ الملف كامل — الإصدار 14 · 9 صفحات</div>
+      <div class="complete">✔️ الملف كامل — الإصدار 15 · 9 صفحات</div>
     </div>
   </div>
 </div>
@@ -543,7 +543,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
       <div class="sb-tag lat">PODCAST PRODUCTION SUITE</div>
     </div>
     <nav class="sb-nav" id="nav"></nav>
-    <div class="sb-foot"><span class="dot"></span>الإصدار 14 · 9 صفحات · مزامنة تلقائية</div>
+    <div class="sb-foot"><span class="dot"></span>الإصدار 15 · 9 صفحات · مزامنة تلقائية</div>
   </aside>
 
   <header id="topbar">
@@ -559,7 +559,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
       <div class="av" id="whoAv">؟</div>
       <div class="wm"><b id="whoName">—</b><span id="whoRole">—</span></div>
     </div>
-    <button class="btn ghost sm" id="btnLogout" type="button">خروج</button>
+    <button class="btn ghost sm" id="btnLogout" type="button" title="تسجيل الخروج وتبديل المستخدم">🔄 تبديل</button>
   </header>
 
   <main id="content">
@@ -1082,27 +1082,81 @@ function lgMsg(txt, info) {
   el.textContent = txt;
   el.className = 'lg-msg on' + (info ? ' info' : '');
 }
+/* اسم المستخدم بيتقارن بشكل متسامح:
+   أياد = اياد = أَياد · و«اياد» لوحده يكفي بدل الاسم الكامل · المسافات الزيادة مش مشكلة */
+function normName(s) {
+  return String(s || '')
+    .replace(/[\u064B-\u0652\u0640\u0670]/g, '')
+    .replace(/[أإآٱا]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/[\u200f\u200e]/g, '')
+    .replace(/[^\u0600-\u06FF0-9a-zA-Z ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+function findUser(name, pw, table) {
+  var n = normName(name);
+  if (!n) return null;
+  var exact = [], part = [];
+  Object.keys(table).forEach(function (k) {
+    var nk = normName(k);
+    if (nk === n) exact.push(k);
+    else if (nk.split(' ').indexOf(n) >= 0 || nk.indexOf(n) === 0 || n.indexOf(nk) === 0) part.push(k);
+  });
+  var list = exact.length ? exact : part;
+  if (!list.length) return null;
+  if (list.length > 1 && pw) {
+    var byPw = list.filter(function (k) { return table[k] === pw; });
+    if (byPw.length === 1) return { key: byPw[0], pass: table[byPw[0]] };
+  }
+  if (list.length > 1) return { ambiguous: list };
+  return { key: list[0], pass: table[list[0]] };
+}
 function doLogin(kind) {
   try {
     var nmEl = $('lgName'), pwEl = $('lgPass');
     var nm = (nmEl && nmEl.value ? nmEl.value : '').trim();
-    var pw = (pwEl && pwEl.value ? pwEl.value : '');
-    if (!nm) { lgMsg('✏️ اكتب الاسم الأول قبل الدخول.'); return; }
+    var pw = (pwEl && pwEl.value ? pwEl.value : '').trim();
+    if (!nm) { lgMsg('✏️ اكتب اسمك الأول قبل الدخول.'); return; }
+
     if (kind === 'admin') {
-      var ok = false, k;
-      for (k in ADMINS) { if (Object.prototype.hasOwnProperty.call(ADMINS, k) && k === nm && ADMINS[k] === pw) ok = true; }
-      if (!ok) { lgMsg('❌ الاسم مش مدير أو كلمة المرور غلط. جرب تاني أو ادخل كعضو.'); return; }
-      session = { name: nm, role: 'admin', at: new Date().toISOString() };
-    } else if (Object.prototype.hasOwnProperty.call(MEMBERS_PW, nm)) {
-      /* a known team member → their own password is required */
-      if (MEMBERS_PW[nm] !== pw) {
-        lgMsg('❌ كلمة المرور غلط للعضو «' + nm + '».');
+      var a = findUser(nm, pw, ADMINS);
+      if (a && a.ambiguous) {
+        lgMsg('✏️ اكتب الاسم بالكامل — فيه أكتر من واحد بالاسم ده (' + a.ambiguous.join(' · ') + ').');
         return;
       }
-      session = { name: nm, role: 'member', at: new Date().toISOString() };
+      if (!a) {
+        if (findUser(nm, '', MEMBERS_PW)) {
+          lgMsg('👤 «' + nm + '» عضو في الفريق وليس ليدر — ادخل من زر «دخول كعضو» واكتب كلمة مرورك.');
+        } else {
+          lgMsg('❌ الليدرز هما: أياد الشربيني · هشام وليد — اكتب الاسم زي ما هو ومتنساش كلمة المرور.');
+        }
+        return;
+      }
+      if (a.pass !== pw) { lgMsg('❌ كلمة المرور غلط لـ «' + a.key + '». جرب تاني.'); return; }
+      session = { name: a.key, role: 'admin', at: new Date().toISOString() };
     } else {
-      /* any other name → view-only guest, no password */
-      session = { name: nm, role: 'member', at: new Date().toISOString() };
+      /* member button */
+      if (findUser(nm, pw, ADMINS)) {
+        lgMsg('👑 «' + nm + '» ليدر — ادخل من زر «دخول كمدير» واكتب كلمة المرور 2030.');
+        return;
+      }
+      var m = findUser(nm, pw, MEMBERS_PW);
+      if (m && m.ambiguous) {
+        lgMsg('✏️ اكتب الاسم بالكامل — فيه أكتر من عضو بالاسم ده (' + m.ambiguous.join(' · ') + ').');
+        return;
+      }
+      if (m) {
+        if (m.pass !== pw) { lgMsg('❌ كلمة المرور غلط للعضو «' + m.key + '». اكتبها صح وجرب تاني.'); return; }
+        session = { name: m.key, role: 'member', at: new Date().toISOString() };
+      } else {
+        /* any other name → view-only guest, no password needed */
+        session = { name: nm, role: 'member', at: new Date().toISOString() };
+      }
     }
     lsSet(K_SESS, JSON.stringify(session));
     enterApp(true);
@@ -2996,6 +3050,6 @@ if (document.readyState === 'loading') {
 }
 })();
 </script>
-<!-- FILE-COMPLETE :: BOUSLA Podcast Production Suite :: v14 :: 9 pages :: single-file · live auto-sync · GitHub auto-deploy · accounts -->
+<!-- FILE-COMPLETE :: BOUSLA Podcast Production Suite :: v15 :: 9 pages :: single-file · tolerant login · live auto-sync · GitHub auto-deploy -->
 </body>
 </html>
