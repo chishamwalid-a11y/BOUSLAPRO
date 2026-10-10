@@ -513,7 +513,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
     <div class="lg-card">
       <div class="lg-mini lat">BOUS<em>LA</em><i>PODCAST PRODUCTION SUITE</i></div>
       <h2>تسجيل الدخول</h2>
-      <p class="hint">اكتب اسمك، وبعدين اختار طريقة الدخول. المدراء بس اللي يقدروا يعدّلوا — الأعضاء عرض وطباعة.</p>
+      <p class="hint">اكتب اسمك وكلمة مرورك وبعدين اختار طريقة الدخول. الليدرز بس هما اللي يعدّلوا — أعضاء الفريق بيشوفوا كل حاجة ويطبعوا، من غير أي تعديل.</p>
       <div class="lg-msg" id="lgMsg"></div>
       <div class="field">
         <label class="f" for="lgName">الاسم</label>
@@ -528,7 +528,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
         <button class="btn blue" id="lgMember" type="button">دخول كعضو</button>
       </div>
       <div class="hr"></div>
-      <div class="complete">✔️ الملف كامل — الإصدار 12 · 9 صفحات</div>
+      <div class="complete">✔️ الملف كامل — الإصدار 14 · 9 صفحات</div>
     </div>
   </div>
 </div>
@@ -543,7 +543,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
       <div class="sb-tag lat">PODCAST PRODUCTION SUITE</div>
     </div>
     <nav class="sb-nav" id="nav"></nav>
-    <div class="sb-foot"><span class="dot"></span>الإصدار 12 · 9 صفحات · نظام محلي آمن</div>
+    <div class="sb-foot"><span class="dot"></span>الإصدار 14 · 9 صفحات · مزامنة تلقائية</div>
   </aside>
 
   <header id="topbar">
@@ -768,7 +768,13 @@ var DEFAULT_MEMBERS = PHOTOS.map(function (p, i) {
   return { id: 'm' + (i + 1), name: '', role: '', color: MEM_COLORS[i % MEM_COLORS.length], photo: p };
 });
 
+/* ===== الحسابات =====
+   ليدرز (تعديل كامل + طباعة): أياد الشربيني / 2030 · هشام وليد / 2030
+   أعضاء (بكلمة مرور خاصة — عرض وطباعة فقط، مفيش تعديل):
+     يوسف وائل / 2000 · محمد حسين / 2010 · محمد سنان / 2020
+   أي اسم تاني = ضيف عرض فقط بدون كلمة مرور. */
 var ADMINS = { 'أياد الشربيني': '2030', 'هشام وليد': '2030' };
+var MEMBERS_PW = { 'يوسف وائل': '2000', 'محمد حسين': '2010', 'محمد سنان': '2020' };
 var K_DATA = 'bousla.data.v10', K_SESS = 'bousla.session.v10';
 
 /* ---------- 5) State ---------- */
@@ -783,7 +789,12 @@ function blankState() {
       rows: []
     },
     members: DEFAULT_MEMBERS.map(function (m) { return { id: m.id, name: m.name, role: m.role, color: m.color, photo: m.photo || '' }; }),
-    sync: { provider: '', jsonbin: { binId: '', key: '' }, firebase: { projectId: '', apiKey: '' }, supabase: { url: '', anonKey: '' }, gas: { url: '' }, noImages: false, auto: true },
+    sync: {
+      provider: '', jsonbin: { binId: '', key: '' }, firebase: { projectId: '', apiKey: '' },
+      supabase: { url: '', anonKey: '' }, gas: { url: '' },
+      gh: { owner: '', repo: '', branch: 'main', path: 'index.html', token: '', lastPublish: '' },
+      noImages: false, auto: true, adv: false
+    },
     meta: { lastSync: '', updatedAt: '' }
   };
 }
@@ -1082,7 +1093,15 @@ function doLogin(kind) {
       for (k in ADMINS) { if (Object.prototype.hasOwnProperty.call(ADMINS, k) && k === nm && ADMINS[k] === pw) ok = true; }
       if (!ok) { lgMsg('❌ الاسم مش مدير أو كلمة المرور غلط. جرب تاني أو ادخل كعضو.'); return; }
       session = { name: nm, role: 'admin', at: new Date().toISOString() };
+    } else if (Object.prototype.hasOwnProperty.call(MEMBERS_PW, nm)) {
+      /* a known team member → their own password is required */
+      if (MEMBERS_PW[nm] !== pw) {
+        lgMsg('❌ كلمة المرور غلط للعضو «' + nm + '».');
+        return;
+      }
+      session = { name: nm, role: 'member', at: new Date().toISOString() };
     } else {
+      /* any other name → view-only guest, no password */
       session = { name: nm, role: 'member', at: new Date().toISOString() };
     }
     lsSet(K_SESS, JSON.stringify(session));
@@ -2157,6 +2176,82 @@ function cfgComplete() {
   if (s.provider === 'Apps Script') return !!s.gas.url;
   return false;
 }
+/* ---------- GitHub: push the whole site so everyone gets the update ---------- */
+function b64enc(str) {
+  try { return btoa(unescape(encodeURIComponent(str))); } catch (e) { return ''; }
+}
+function ghReady() {
+  var g = state.sync && state.sync.gh;
+  return !!(g && g.owner && g.repo && g.token);
+}
+function ghHeaders() {
+  var g = state.sync.gh;
+  return {
+    'Authorization': 'Bearer ' + String(g.token).trim(),
+    'Accept': 'application/vnd.github+json',
+    'Content-Type': 'application/json'
+  };
+}
+function ghTest() {
+  if (!guard()) return;
+  var g = state.sync.gh;
+  if (!ghReady()) { toast('كمّل اسم المستخدم والمستودع والتوكن الأول', true); return; }
+  setSyncState('busy', 'جاري اختبار GitHub…');
+  httpJSON('https://api.github.com/repos/' + g.owner.trim() + '/' + g.repo.trim(),
+    { method: 'GET', headers: ghHeaders() }, function (err, res) {
+      if (err) { setSyncState('err', 'GitHub: ' + err); toast('فشل الاتصال: ' + err, true); return; }
+      if (res && res.status === 200) { setSyncState('ok', 'GitHub متصل ✓ — المستودع موجود'); toast('الاتصال بـ GitHub تمام ✓'); return; }
+      var m = 'HTTP ' + (res ? res.status : '?');
+      if (res && res.status === 401) m = 'التوكن غلط أو منتهي';
+      if (res && res.status === 404) m = 'المستودع مش موجود أو التوكن مالوش صلاحية عليه';
+      setSyncState('err', 'GitHub: ' + m); toast('فشل الاتصال: ' + m, true);
+    });
+}
+function ghPublish(silent) {
+  if (!guard()) return;
+  if (!ghReady()) { toast('كمّل بيانات GitHub الأول (المالك · المستودع · التوكن)', true); return; }
+  var g = state.sync.gh;
+  var html;
+  try { html = buildSiteHTML(); }
+  catch (e) { showErr('تعذر تجهيز الملف', e.message); return; }
+  var b64 = b64enc(html);
+  if (!b64) { toast('تعذر تجهيز الملف', true); return; }
+  if (html.length > 900000 && !silent) {
+    toast('الملف كبير (' + bytes(html.length) + ') — ممكن GitHub يرفضه. جرّب تقلل الصور.', true, 7000);
+  }
+  setSyncState('busy', 'جاري النشر على GitHub…');
+  var base = 'https://api.github.com/repos/' + g.owner.trim() + '/' + g.repo.trim() +
+    '/contents/' + encodeURIComponent(g.path || 'index.html');
+  var branch = g.branch || 'main';
+  httpJSON(base + '?ref=' + encodeURIComponent(branch), { method: 'GET', headers: ghHeaders() }, function (err, res) {
+    var sha = '';
+    if (!err && res && res.status === 200) { try { sha = JSON.parse(res.text).sha || ''; } catch (e) { } }
+    var body = {
+      message: 'BOUSLA update — ' + new Date().toISOString().replace('T', ' ').slice(0, 16),
+      content: b64, branch: branch
+    };
+    if (sha) body.sha = sha;
+    httpJSON(base, { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) }, function (err2, res2) {
+      if (err2) { setSyncState('err', 'النشر فشل: ' + err2); if (!silent) toast('فشل النشر: ' + err2, true); return; }
+      if (res2 && res2.status >= 200 && res2.status < 300) {
+        state.meta.updatedAt = new Date().toISOString();
+        state.sync.gh.lastPublish = state.meta.updatedAt;
+        seedStamp = state.meta.updatedAt;
+        save(true);
+        setSyncState('ok', 'تم النشر ✓ — ' + stampTxt(state.sync.gh.lastPublish));
+        if (!silent) toast('🚀 تم النشر — الموقع هيتحدّث لكل الأعضاء خلال دقيقة', false, 9000);
+        if (activePage === 'sync' && RENDER.sync) RENDER.sync();
+        return;
+      }
+      var m = 'HTTP ' + (res2 ? res2.status : '?');
+      if (res2 && (res2.status === 401 || res2.status === 403)) m = 'التوكن مالوش صلاحية كتابة (لازم Contents: Read and write)';
+      if (res2 && res2.status === 409) m = 'تعارض نسخة — جرّب تاني';
+      if (res2 && res2.status === 413) m = 'الملف أكبر من المسموح على GitHub';
+      setSyncState('err', 'النشر فشل: ' + m);
+      if (!silent) toast('فشل النشر: ' + m, true, 8000);
+    });
+  });
+}
 function httpJSON(url, opts, cb) {
   try {
     if (typeof fetch !== 'function') { cb('المتصفح ده مش بيدعم fetch — استخدم كود المشاركة'); return; }
@@ -2275,7 +2370,35 @@ function cloudPush(silent) {
     if (activePage === 'sync' && RENDER.sync) RENDER.sync();
   });
 }
-function cloudPull(silent) {
+/* ---------- live auto-pull (everything the leaders do shows up by itself) ---------- */
+var autoPullTmr = null;
+function busyTyping() {
+  try {
+    var a = document.activeElement;
+    if (a) {
+      var t = a.tagName;
+      if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || a.isContentEditable) return true;
+    }
+  } catch (e) { }
+  return !!saveTmr;
+}
+function startAutoPull(force) {
+  try {
+    if (autoPullTmr) { if (!force) return; clearInterval(autoPullTmr); autoPullTmr = null; }
+    if (typeof setInterval !== 'function') return;
+    if (!state.sync || !state.sync.provider || !cfgComplete()) return;
+    autoPullTmr = setInterval(function () {
+      try {
+        if (pullLock || busyTyping()) return;
+        var dm = $('docModal');
+        if (dm && dm.className.indexOf('on') >= 0) return;
+        cloudPull(true);
+      } catch (e) { }
+    }, 15000);
+  } catch (e) { }
+}
+function stopAutoPull() { try { if (autoPullTmr) { clearInterval(autoPullTmr); autoPullTmr = null; } } catch (e) { } }
+function cloudPull(silent, force) {
   if (syncBusy) return;
   if (!state.sync.provider) { if (!silent) toast('اختار مزوّد المزامنة الأول', true); return; }
   if (!cfgComplete()) { if (!silent) toast('كمّل بيانات المزوّد الأول', true); return; }
@@ -2287,6 +2410,14 @@ function cloudPull(silent) {
     if (!obj || !looksLikeData(obj)) {
       pullLock = false; setSyncState('idle', 'السحابة فاضية — ارفع البيانات الأول');
       if (!silent) toast('مفيش بيانات على السحابة لسه');
+      return;
+    }
+    /* nothing new? don't re-render (keeps typing smooth during auto-pull) */
+    var theirs = (obj.meta && obj.meta.updatedAt) || '';
+    var mine = (state.meta && state.meta.updatedAt) || '';
+    if (!force && theirs && mine && theirs <= mine) {
+      pullLock = false;
+      setSyncState('ok', 'متزامن — آخر سحب: ' + nowStr());
       return;
     }
     try {
@@ -2348,6 +2479,11 @@ RENDER.sync = function () {
   function fx(label, val, ph, grp) {
     return '<div><label class="f">' + esc(label) + '</label><input class="inp" data-sy="' + grp + '" data-syk="' + label + '" value="' + esc(val) + '" placeholder="' + esc(ph) + '" ' + roleAttr() + '></div>';
   }
+  function ghfx(label, val, ph) {
+    return '<div><label class="f">' + esc(label) + '</label><input class="inp" data-gh="' + esc(label) +
+      '" value="' + esc(val) + '" placeholder="' + esc(ph) + '" ' + roleAttr() + '></div>';
+  }
+  if (!s.gh) s.gh = { owner: '', repo: '', branch: 'main', path: 'index.html', token: '', lastPublish: '' };
   var cfg = '';
   if (s.provider === 'JSONBin') {
     cfg = '<div class="grid4">' +
@@ -2376,7 +2512,8 @@ RENDER.sync = function () {
     pageHead('sync') +
     coverHTML('sync', 'المزامنة السحابية — بيانات مشتركة لكل الأعضاء', '', true) +
     '<div class="card no-print"><h3><span class="bar"></span>الحفظ جوه الموقع</h3>' +
-      '<div class="csub">كل اللي بتكتبه (نصوص، مواعيد، سكريبتات، بنود المونتاج) بيتحفظ تلقائي جوه الموقع نفسه — من غير أي رابط أو حساب خارجي.</div>' +
+      '<div class="csub">كل اللي بتكتبه (نصوص، مواعيد، سكريبتات، بنود المونتاج) بيتحفظ تلقائي على جهازك. ' +
+        'وعشان أي تعديل يعمله الليدرز <b>يظهر لكل الأعضاء لوحده من غير ما ترفع الملف على الاستضافة تاني</b> — اربط مزوّد مزامنة مرة واحدة من الزر ده، وبعد كده السكريبتات والمواعيد والمونتاج والأعضاء وصورهم بتتزامن لوحدها كل 15 ثانية.</div>' +
       '<div class="grid4">' +
         '<div class="stat"><div class="si" style="background:#16a34a">' + iconSvg('db', 'i22') + '</div>' +
           '<div><div class="sv lat">' + (s.provider ? 'سحابي + محلي' : 'جوه الموقع') + '</div><div class="sl">مكان الحفظ</div></div></div>' +
@@ -2388,7 +2525,7 @@ RENDER.sync = function () {
           '<div><div class="sv">' + (LS_OK ? 'تمام' : 'مقفول') + '</div><div class="sl">حالة التخزين</div></div></div>' +
       '</div>' +
       '<div class="tools" style="margin-top:14px">' +
-        '<button class="btn ghost" type="button" data-adv>' + (adv ? '✕ إخفاء إعداد المزامنة' : '☁️ إعداد مزامنة سحابية (اختياري تماماً)') + '</button>' +
+        '<button class="btn gold" type="button" data-adv>' + (adv ? '✕ إخفاء إعداد المزامنة' : '🔗 ربط المزامنة التلقائية (عشان التعديل يظهر للكل لوحده)') + '</button>' +
       '</div></div>' +
     (adv ? ('<div class="card no-print"><h3><span class="bar"></span>المزوّد</h3>' +
       '<div class="csub">اختار مزوّد واحد بس — وبعدها كل الأعضاء يشوفوا نفس البيانات عند الدخول.</div>' +
@@ -2412,7 +2549,23 @@ RENDER.sync = function () {
         '<button class="btn blue" type="button" data-sypull>⬇️ سحب البيانات</button>' +
         '<button class="btn ghost" type="button" data-sytest>اختبار الاتصال</button>' +
       '</div></div>' +
-    '<div class="card"><h3><span class="bar"></span>Google Apps Script + Drive</h3>' +
+     '<div class="card no-print"><h3><span class="bar"></span>نشر تلقائي على الاستضافة (GitHub) — من غير ما ترفع الملف بإيدك</h3>' +
+       '<div class="csub">حطّ بيانات مستودعك مرة واحدة بس. بعد كده أي تعديل تعمله، دوس «🚀 انشر على الاستضافة» — الملف هيتحدّث على GitHub لوحده والموقع يتغير لكل الأعضاء من غير ما ترفع أي حاجة بإيدك.</div>' +
+       '<div class="grid4">' +
+         ghfx('اسم المستخدم / المالك', s.gh.owner, 'hishamwalid') +
+         ghfx('اسم المستودع', s.gh.repo, 'bousla') +
+         ghfx('الفرع', s.gh.branch, 'main') +
+         ghfx('مسار الملف', s.gh.path, 'index.html') +
+       '</div>' +
+       '<div style="margin-top:11px">' + ghfx('GitHub Token', s.gh.token, 'github_pat_… (صلاحية Contents: Read and write)') + '</div>' +
+       '<div class="tools" style="margin-top:14px">' +
+         '<button class="btn gold' + (isAdmin() ? '' : ' off') + '" type="button" data-ghpush>🚀 انشر على الاستضافة</button>' +
+         '<button class="btn ghost' + (isAdmin() ? '' : ' off') + '" type="button" data-ghtest>اختبار الاتصال بـ GitHub</button>' +
+         (s.gh.lastPublish ? '<span class="chip">آخر نشر تلقائي: <b class="lat">' + esc(stampTxt(s.gh.lastPublish)) + '</b></span>' : '') +
+       '</div>' +
+       '<div class="mini" style="margin-top:9px">التوكن بيتخزن على جهازك بس ومش بيتدمج في الملف المنشور. لو المستودع فيه الصفحة على GitHub Pages، التحديث بيظهر خلال دقيقة تقريبًا.</div>' +
+     '</div>' +
+     '<div class="card"><h3><span class="bar"></span>Google Apps Script + Drive</h3>' +
       '<div class="csub">اعمل New Project في <span class="lat">script.google.com</span>، الصق الكود ده، وبعدين Deploy كـ Web App (Execute as me · Access: Anyone) وحط الرابط فوق.</div>' +
       '<pre class="blk lat" id="gasCode">' + esc(GAS_CODE) + '</pre>' +
       '<div class="tools no-print" style="margin-top:11px">' +
@@ -2429,7 +2582,7 @@ RENDER.sync = function () {
 
   bindPrintBtn(host);
   var pv = $('syProv');
-  if (pv) pv.addEventListener('change', function () { state.sync.provider = pv.value; save(true); RENDER.sync(); });
+  if (pv) pv.addEventListener('change', function () { state.sync.provider = pv.value; save(true); startAutoPull(true); RENDER.sync(); });
   var ni = $('syNoImg'); if (ni) ni.addEventListener('change', function () { state.sync.noImages = ni.checked; save(true); RENDER.sync(); });
   var au = $('syAuto'); if (au) au.addEventListener('change', function () { state.sync.auto = au.checked; save(true); toast(au.checked ? 'المزامنة التلقائية شغالة' : 'المزامنة التلقائية مقفولة'); });
   var map = { 'Bin ID': ['jsonbin', 'binId'], 'Master Key': ['jsonbin', 'key'], 'Project ID': ['firebase', 'projectId'], 'API Key': ['firebase', 'apiKey'], 'Project URL': ['supabase', 'url'], 'Anon Key': ['supabase', 'anonKey'], 'Web App URL': ['gas', 'url'] };
@@ -2446,7 +2599,7 @@ RENDER.sync = function () {
     });
   });
   qsa('[data-sypush]', host).forEach(function (b) { b.addEventListener('click', function () { cloudPush(false); }); });
-  qsa('[data-sypull]', host).forEach(function (b) { b.addEventListener('click', function () { cloudPull(false); }); });
+  qsa('[data-sypull]', host).forEach(function (b) { b.addEventListener('click', function () { cloudPull(false, true); }); });
   qsa('[data-sytest]', host).forEach(function (b) {
     b.addEventListener('click', function () {
       if (!state.sync.provider) { toast('اختار مزوّد الأول', true); return; }
@@ -2459,6 +2612,23 @@ RENDER.sync = function () {
       });
     });
   });
+  /* --- GitHub auto-publish --- */
+  var GH_FIELDS = {
+    'اسم المستخدم / المالك': 'owner', 'اسم المستودع': 'repo', 'الفرع': 'branch',
+    'مسار الملف': 'path', 'GitHub Token': 'token'
+  };
+  qsa('[data-gh]', host).forEach(function (el) {
+    el.addEventListener('input', function () {
+      var k = GH_FIELDS[el.getAttribute('data-gh')];
+      if (!k) return;
+      if (!state.sync.gh) state.sync.gh = {};
+      state.sync.gh[k] = el.value.trim();
+      save();
+    });
+    el.addEventListener('change', function () { startAutoPull(true); });
+  });
+  qsa('[data-ghpush]', host).forEach(function (b) { b.addEventListener('click', function () { ghPublish(false); }); });
+  qsa('[data-ghtest]', host).forEach(function (b) { b.addEventListener('click', function () { ghTest(); }); });
   qsa('[data-copygas]', host).forEach(function (b) { b.addEventListener('click', function () { copyText(GAS_CODE, 'تم نسخ كود Apps Script ✓'); }); });
   qsa('[data-mkcode]', host).forEach(function (b) {
     b.addEventListener('click', function () {
@@ -2530,8 +2700,8 @@ RENDER.account = function () {
         '</div></div>' +
       '<div class="card"><h3><span class="bar"></span>ملاحظات الصلاحيات</h3>' +
         '<ul class="ck">' +
-          '<li><span class="num">1</span><span>المدراء: <b>أياد الشربيني</b> و <b>هشام وليد</b> — ليهم التعديل الكامل بعد تسجيل الدخول بكلمة المرور.</span></li>' +
-          '<li><span class="num">2</span><span>أي اسم تاني بيدخل من زر «دخول كعضو» بدون كلمة مرور.</span></li>' +
+          '<li><span class="num">1</span><span><b>الليدرز (تعديل كامل):</b> أياد الشربيني و هشام وليد — يدخلوا من زر «دخول كمدير» بكلمة مرورهم.</span></li>' +
+          '<li><span class="num">2</span><span><b>أعضاء الفريق (عرض وطباعة فقط):</b> يوسف وائل · محمد حسين · محمد سنان — يدخلوا من زر «دخول كعضو» بكلمة المرور الخاصة بكل واحد. مفيش أي تعديل متاح لهم.</span></li>' +
           '<li><span class="num">3</span><span>العضو لو حاول يعدّل حاجة مقفولة تظهرله رسالة «🔐 التعديل للمدراء فقط».</span></li>' +
           '<li><span class="num">4</span><span>الجلسة محفوظة في المتصفح لحد ما تدوس خروج أو تبديل المستخدم.</span></li>' +
         '</ul></div>' +
@@ -2752,7 +2922,7 @@ function publishSite() {
     setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) { } }, 900);
     seedStamp = state.meta.updatedAt;
     setSaver('محفوظ في الموقع ✓');
-    toast('✅ اتنزل ملف index.html جديد فيه بياناتك — ارفعه مكان القديم وكل حد هيفتح الموقع هيشوف اللي كتبته', false, 11000);
+    toast('✅ اتنزل ملف index.html جديد فيه كل شغلك — ارفعه على الاستضافة أو ابعته للأعضاء، وأي واحد يدخل باسمه وكلمة مروره هيشوف كل حاجة', false, 12000);
     if (activePage === 'data' && RENDER.data) RENDER.data();
   } catch (e) { showErr('تعذر تجهيز الملف — جرّب تاني', e.message); }
 }
@@ -2781,8 +2951,9 @@ function enterApp(fresh) {
     if (a) a.className = 'on';
     applySession();
     go(activePage || 'home');
-    if (fresh && state.sync.provider && cfgComplete()) {
-      setTimeout(function () { try { cloudPull(true); } catch (e) { } }, 900);
+    if (state.sync.provider && cfgComplete()) {
+      setTimeout(function () { try { cloudPull(true, true); } catch (e) { } }, fresh ? 900 : 1600);
+      startAutoPull();   /* pull the latest every 15s → كل حاجة الليدرز يعملوها تظهر لوحدها */
     }
   } catch (e) { showErr('تعذر فتح الواجهة', e.message); }
 }
@@ -2825,6 +2996,6 @@ if (document.readyState === 'loading') {
 }
 })();
 </script>
-<!-- FILE-COMPLETE :: BOUSLA Podcast Production Suite :: v12 :: 9 pages :: single-file · publish-into-file · member photos -->
+<!-- FILE-COMPLETE :: BOUSLA Podcast Production Suite :: v14 :: 9 pages :: single-file · live auto-sync · GitHub auto-deploy · accounts -->
 </body>
 </html>
