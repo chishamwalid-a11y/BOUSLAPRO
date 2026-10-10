@@ -368,6 +368,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
   .stat{padding:12px}
   .stat .sv{font-size:19px}
   .sb-logo{font-size:26px}
+  #btnPublish .ptxt{display:none}
 }
 @media (max-width:390px){
   .grid6,.grid4,.split3{grid-template-columns:1fr}
@@ -518,6 +519,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
     <div class="tb-title"><b id="tbName">الرئيسية</b><i class="lat" id="tbEn">PRODUCTION HUB</i></div>
     <div class="tb-sp"></div>
     <div class="saver" id="saver">جاهز</div>
+    <button class="btn gold sm" id="btnPublish" type="button" title="يحفظ اللي كتبته جوه ملف الموقع نفسه عشان أي حد يفتحه يشوفه"><span>💾</span><span class="ptxt">حفظ في الموقع</span></button>
     <span class="badge member" id="roleBadge">عضو</span>
     <div class="who">
       <div class="av" id="whoAv">؟</div>
@@ -558,6 +560,13 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
    ===================================================================== */
 (function () {
 'use strict';
+
+/* ---------- SEED (the data baked inside this very file) ----------
+   Press the «حفظ في الموقع» button to rewrite this line with your data,
+   so anyone who opens the file/site sees it exactly like you wrote it. */
+/*SEED_START*/
+var SEED_DATA = null;
+/*SEED_END*/
 
 /* ---------- 0) Global error safety net ---------- */
 var errShown = false;
@@ -791,11 +800,27 @@ function isBlankLocal() {
       && !(state.montage.rows || []).some(function (r) { return r && ((r.item || '').trim() || (r.content || '').trim()); });
   } catch (e) { return true; }
 }
+/* Load order: whichever is NEWER wins — the copy saved on this device, or the
+   copy baked inside the file (SEED_DATA). A fresh visitor on any device gets
+   the baked-in copy, so everyone sees the same thing. */
 function loadState() {
+  var local = null, seed = null;
   var raw = lsGet(K_DATA);
-  if (!raw) { state = blankState(); return; }
-  try { state = normalize(JSON.parse(raw)); }
-  catch (e) { state = blankState(); showErr('بيانات محفوظة تالفة — تم البدء من جديد', e.message); }
+  if (raw) {
+    try { var p = JSON.parse(raw); if (looksLikeData(p)) local = p; } catch (e) { local = null; }
+  }
+  try { if (looksLikeData(SEED_DATA)) seed = SEED_DATA; } catch (e) { seed = null; }
+  if (local && seed) {
+    var lt = (local.meta && local.meta.updatedAt) || '';
+    var st = (seed.meta && seed.meta.updatedAt) || '';
+    state = normalize(st > lt ? seed : local);
+  } else if (local) {
+    state = normalize(local);
+  } else if (seed) {
+    state = normalize(seed);
+  } else {
+    state = blankState();
+  }
 }
 
 /* ---------- 6) Autosave (debounced, silent) ---------- */
@@ -951,14 +976,14 @@ function refreshCvIndex(cb) {
 
 /* ---------- 8) Toast + guard ---------- */
 var toastTmr = null;
-function toast(msg, warn) {
+function toast(msg, warn, ms) {
   try {
     var t = $('toast');
     if (!t) return;
     t.textContent = msg;
     t.className = warn ? 'on warn' : 'on';
     if (toastTmr) clearTimeout(toastTmr);
-    toastTmr = setTimeout(function () { t.className = ''; }, 2600);
+    toastTmr = setTimeout(function () { t.className = ''; }, ms || 2600);
   } catch (e) { }
 }
 function guard() {
@@ -2346,11 +2371,35 @@ RENDER.data = function () {
   var host = $('page-data');
   if (!host) return;
   var size = bytes(JSON.stringify(state).length);
-  var raw = 0;
+  var raw = 0, pl = 0;
   try { raw = (lsGet(K_DATA) || '').length; } catch (e) { }
+  try { pl = JSON.stringify(seedPayload()).length; } catch (e) { pl = 0; }
+  var sizeChip = (pl > 800000)
+    ? '<span class="chip">⚠️ حجم اللي هيتدمج كبير (<b class="lat">' + bytes(pl) + '</b>) — قلل صور السكريبتات عشان الملف ما يتقلش</span>'
+    : '<span class="chip">حجم اللي هيتدمج في الملف: <b class="lat">' + bytes(pl) + '</b></span>';
   host.innerHTML =
     pageHead('data') +
     coverHTML('data', 'البيانات والحفظ — نسخ احتياطي واستعادة', '', true) +
+    '<div class="card no-print" style="border:1.5px solid #f59e0b;background:linear-gradient(135deg,#fffbeb,#fff7ed)">' +
+      '<h3><span class="bar" style="background:#f59e0b"></span>حفظ بياناتك جوه الموقع (عشان أي حد يشوفها)</h3>' +
+      '<div class="csub">الكتابة بتتحفظ على جهازك تلقائي. الزر ده بيعمل نسخة جديدة من <span class="lat">index.html</span> و<b>بياناتك مدمجة جواها</b> — ارفعها مكان الملف القديم، وأي حد يفتح الموقع هيلاقي السكريبتات والمواعيد كنها في الموقع من الأساس.</div>' +
+      '<div class="grid4">' +
+        statCard('clock', '#0d9488', stampTxt(state.meta.updatedAt), 'آخر تعديل عندك') +
+        statCard('db', '#f59e0b', stampTxt(seedStamp), 'آخر نسخة جوه الملف') +
+        statCard('script', '#7c3aed', state.scripts.length, 'سكريبتات هتتحفظ') +
+        statCard('clock', '#0891b2', state.schedule.rows.length, 'مواعيد هتتحفظ') +
+      '</div>' +
+      '<div class="tools" style="margin-top:14px">' +
+        '<button class="btn gold' + (isAdmin() ? '' : ' off') + '" type="button" data-publish>💾 حفظ في الموقع</button>' +
+        (seedStamp && seedStamp >= (state.meta.updatedAt || '') ? '<span class="chip">✔️ الملف فيه آخر نسخة بالفعل</span>' : '<span class="chip">⚠️ فيه تعديلات لسه مش جوه الملف</span>') +
+        sizeChip +
+      '</div>' +
+      '<ul class="ck gold" style="margin-top:14px">' +
+        '<li><span class="num">1</span><span>اكتب اللي عايزه عادي في أي صفحة — بيتحفظ على جهازك أول بأول.</span></li>' +
+        '<li><span class="num">2</span><span>دوس <b>«حفظ في الموقع»</b> → هينزل ملف اسمه <span class="lat">index.html</span> فيه كل بياناتك.</span></li>' +
+        '<li><span class="num">3</span><span>ارفع الملف الجديد <b>مكان القديم</b> (GitHub Pages: Replace file · أو اسحبه على Netlify Drop).</span></li>' +
+        '<li><span class="num">4</span><span>افتح الرابط من أي موبايل أو متصفح — البيانات هتظهر لكل الأعضاء بدون أي إعداد.</span></li>' +
+      '</ul></div>' +
     '<div class="grid4 no-print">' +
       statCard('db', '#1e3a8a', size, 'حجم البيانات الحالي') +
       statCard('db', '#0891b2', bytes(raw), 'المحفوظ في localStorage') +
@@ -2391,6 +2440,7 @@ RENDER.data = function () {
       '</div></div>';
   bindPrintBtn(host);
   qsa('[data-exp]', host).forEach(function (b) { b.addEventListener('click', function () { exportJSON(); }); });
+  qsa('[data-publish]', host).forEach(function (b) { b.addEventListener('click', function () { publishSite(); }); });
   qsa('[data-impick]', host).forEach(function (b) {
     b.addEventListener('click', function () { var f = $('impFile'); if (f) f.click(); });
   });
@@ -2411,6 +2461,82 @@ RENDER.data = function () {
   qsa('[data-clear]', host).forEach(function (b) { b.addEventListener('click', function () { clearData(); }); });
 };
 
+/* ---------- 21-b) BAKE THE DATA INSIDE THE SITE FILE ---------- */
+var seedStamp = '';
+try { seedStamp = (SEED_DATA && SEED_DATA.meta && SEED_DATA.meta.updatedAt) || ''; } catch (e) { seedStamp = ''; }
+function seedPayload() {
+  var o;
+  try { o = JSON.parse(JSON.stringify(state)); } catch (e) { o = blankState(); }
+  delete o.sync;          /* never bake credentials into the published file */
+  return o;
+}
+function stampTxt(t) {
+  if (!t) return '—';
+  try {
+    var d = new Date(t);
+    if (isNaN(d.getTime())) return '—';
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  } catch (e) { return '—'; }
+}
+function buildSiteHTML() {
+  var l = $('loginScreen'), a = $('app'), eb = $('errBar'), ts = $('toast'), b = document.body;
+  var pages = qsa('.page');
+  var keep = {
+    lc: l ? l.className : '', ac: a ? a.className : '', bc: b ? b.className : '',
+    ebc: eb ? eb.className : '', ebh: eb ? eb.innerHTML : '',
+    tc: ts ? ts.className : '', ttx: ts ? ts.textContent : '',
+    ph: pages.map(function (p) { return p.innerHTML; }),
+    hs: document.documentElement.getAttribute('style')
+  };
+  try {
+    if (l) l.className = '';
+    if (a) a.className = '';
+    if (b) b.className = '';
+    if (eb) { eb.className = ''; eb.innerHTML = ''; }
+    if (ts) { ts.className = ''; ts.textContent = ''; }
+    document.documentElement.removeAttribute('style');
+    try { closeDrawer(); closeDoc(); } catch (e) { }
+    pages.forEach(function (p) { p.innerHTML = ''; });
+    var html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+    var m1 = '/*SEED_START*/', m2 = '/*SEED_END*/';
+    var i1 = html.indexOf(m1), i2 = html.indexOf(m2);
+    if (i1 < 0 || i2 < 0 || i2 < i1) throw new Error('علامة البيانات مش موجودة في الملف');
+    /* escape every "<" so the JSON can never break out of the script tag */
+    var json = JSON.stringify(seedPayload()).replace(/</g, '\\u003c');
+    return html.slice(0, i1 + m1.length) + '\nvar SEED_DATA = ' + json + ';\n' + html.slice(i2);
+  } finally {
+    pages.forEach(function (p, i) { if (keep.ph[i] !== undefined) p.innerHTML = keep.ph[i]; });
+    if (l) l.className = keep.lc;
+    if (a) a.className = keep.ac;
+    if (b) b.className = keep.bc;
+    if (eb) { eb.className = keep.ebc; eb.innerHTML = keep.ebh; }
+    if (ts) { ts.className = keep.tc; ts.textContent = keep.ttx; }
+    try {
+      if (keep.hs === null || keep.hs === undefined) document.documentElement.removeAttribute('style');
+      else document.documentElement.setAttribute('style', keep.hs);
+    } catch (e) { }
+  }
+}
+function publishSite() {
+  if (!guard()) return;
+  try {
+    state.meta.updatedAt = new Date().toISOString();
+    try { lsSet(K_DATA, JSON.stringify(state)); } catch (e) { }
+    var html = buildSiteHTML();
+    var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'index.html';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) { } }, 900);
+    seedStamp = state.meta.updatedAt;
+    setSaver('محفوظ في الموقع ✓');
+    toast('✅ اتنزل ملف index.html جديد فيه بياناتك — ارفعه مكان القديم وكل حد هيفتح الموقع هيشوف اللي كتبته', false, 11000);
+    if (activePage === 'data' && RENDER.data) RENDER.data();
+  } catch (e) { showErr('تعذر تجهيز الملف — جرّب تاني', e.message); }
+}
+
 /* ---------- 22) Session UI + boot ---------- */
 function applySession() {
   try {
@@ -2422,6 +2548,8 @@ function applySession() {
     if (wRole) wRole.textContent = adm ? 'مدير · تعديل كامل' : 'عضو · عرض فقط';
     if (wAv) wAv.textContent = initials(nm);
     if (rb) { rb.className = 'badge ' + (adm ? 'admin' : 'member'); rb.textContent = adm ? 'مدير' : 'عضو'; }
+    var pb = $('btnPublish');
+    if (pb) pb.style.display = adm ? '' : 'none';
   } catch (e) { }
 }
 function enterApp(fresh) {
@@ -2437,7 +2565,8 @@ function enterApp(fresh) {
   } catch (e) { showErr('تعذر فتح الواجهة', e.message); }
 }
 function bindChrome() {
-  var b1 = $('lgAdmin'), b2 = $('lgMember'), lo = $('btnLogout'), mn = $('menuBtn'), sc = $('scrim');
+  var b1 = $('lgAdmin'), b2 = $('lgMember'), lo = $('btnLogout'), mn = $('menuBtn'), sc = $('scrim'), pb = $('btnPublish');
+  if (pb) pb.addEventListener('click', function () { publishSite(); });
   var nm = $('lgName'), pw = $('lgPass'), dc = $('dmClose');
   if (b1) b1.addEventListener('click', function () { doLogin('admin'); });
   if (b2) b2.addEventListener('click', function () { doLogin('member'); });
