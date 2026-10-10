@@ -766,6 +766,31 @@ function normalize(s) {
   return out;
 }
 
+/* Does this payload actually carry BOUSLA data, or is it empty/junk?
+   Used so an empty cloud record never wipes real local data. */
+function looksLikeData(o) {
+  try {
+    if (!o || typeof o !== 'object') return false;
+    if (o.v || (o.meta && (o.meta.updatedAt || o.meta.lastSync))) return true;
+    if (Array.isArray(o.scripts) && o.scripts.length) return true;
+    if (Array.isArray(o.members) && o.members.length) return true;
+    if (o.schedule && Array.isArray(o.schedule.rows) && o.schedule.rows.length) return true;
+    if (o.montage) {
+      if (o.montage.name || o.montage.owner) return true;
+      if (Array.isArray(o.montage.rows) && o.montage.rows.some(function (r) {
+        return r && ((r.item || '').trim() || (r.content || '').trim());
+      })) return true;
+    }
+    return false;
+  } catch (e) { return false; }
+}
+function isBlankLocal() {
+  try {
+    return !state.scripts.length
+      && !(state.schedule.rows || []).length
+      && !(state.montage.rows || []).some(function (r) { return r && ((r.item || '').trim() || (r.content || '').trim()); });
+  } catch (e) { return true; }
+}
 function loadState() {
   var raw = lsGet(K_DATA);
   if (!raw) { state = blankState(); return; }
@@ -787,9 +812,34 @@ function save(now) {
   if (saveTmr) clearTimeout(saveTmr);
   saveTmr = setTimeout(commitSave, 700);
 }
+/* Multi-tab safety: never overwrite a NEWER write that came from another tab
+   (that is how one open tab could silently erase another tab's work). */
+function storedIsNewer() {
+  try {
+    var raw = lsGet(K_DATA);
+    if (!raw) return false;
+    var o = JSON.parse(raw);
+    var theirs = (o && o.meta && o.meta.updatedAt) || '';
+    var mine = (state.meta && state.meta.updatedAt) || '';
+    return !!(theirs && mine && theirs > mine);
+  } catch (e) { return false; }
+}
+function adoptStored(silent) {
+  try {
+    var raw = lsGet(K_DATA);
+    if (!raw) return false;
+    var keep = state.sync;
+    state = normalize(JSON.parse(raw));
+    state.sync = Object.assign(blankState().sync, keep);
+    if (RENDER[activePage]) RENDER[activePage]();
+    if (!silent) setSaver('تم تحديث البيانات ✓');
+    return true;
+  } catch (e) { return false; }
+}
 function commitSave() {
   saveTmr = null;
   var ok = false;
+  if (storedIsNewer()) { adoptStored(); return; }
   try {
     state.meta.updatedAt = new Date().toISOString();
     ok = lsSet(K_DATA, JSON.stringify(state));
@@ -802,6 +852,7 @@ function commitSave() {
 function flushSave() {
   try {
     if (saveTmr) { clearTimeout(saveTmr); saveTmr = null; }
+    if (storedIsNewer()) { adoptStored(true); return; }
     state.meta.updatedAt = new Date().toISOString();
     if (lsSet(K_DATA, JSON.stringify(state))) setSaver('محفوظ ✓');
   } catch (e) { }
@@ -810,6 +861,23 @@ window.addEventListener('beforeunload', flushSave);
 window.addEventListener('pagehide', flushSave);
 document.addEventListener('visibilitychange', function () {
   try { if (document.visibilityState === 'hidden') flushSave(); } catch (e) { }
+});
+/* Cross-tab live sync: if another tab writes, adopt its data instead of
+   later clobbering it with this tab's stale copy. */
+window.addEventListener('storage', function (e) {
+  try {
+    if (!e || e.key !== K_DATA || !e.newValue) return;
+    var o = JSON.parse(e.newValue);
+    if (!looksLikeData(o)) return;
+    var theirs = (o.meta && o.meta.updatedAt) || '';
+    var mine = (state.meta && state.meta.updatedAt) || '';
+    if (theirs && mine && theirs < mine) return;
+    var keep = state.sync;
+    state = normalize(o);
+    state.sync = Object.assign(blankState().sync, keep);
+    if (RENDER[activePage]) RENDER[activePage]();
+    setSaver('تم التحديث من تاب تاني ✓');
+  } catch (err) { }
 });
 
 /* ---------- 7) IndexedDB (CV files, optional) ---------- */
@@ -1041,6 +1109,32 @@ function bindPrintBtn(root) {
     if (b.__pb) return; b.__pb = 1;
     b.addEventListener('click', function () { printNow(); });
   });
+  bindGoSync(root);
+}
+function bindGoSync(root) {
+  qsa('[data-gosync]', root || document).forEach(function (b) {
+    if (b.__gs) return; b.__gs = 1;
+    b.addEventListener('click', function () { go('sync'); });
+  });
+}
+/* Members on a fresh device/browser see an empty system: tell them WHY and
+   how to get the team's data, instead of showing a silent empty page. */
+function memberEmptyNote(kind) {
+  try {
+    if (isAdmin()) return '';
+    var empty;
+    if (kind === 'scripts') empty = !state.scripts.length;
+    else if (kind === 'schedule') empty = !(state.schedule.rows || []).length;
+    else empty = isBlankLocal();
+    if (!empty) return '';
+    return '<div class="card no-print" style="border-color:#fcd34d;background:#fffbeb">' +
+      '<b>مفيش بيانات ظاهرة عندك على الجهاز ده</b>' +
+      '<div class="mini" style="margin-top:6px">البيانات بتتخزن جوه المتصفح اللي اتكتبت عليه، فممكن تكون مكتوبة عند المدير ومش موجودة عندك. ' +
+      'اطلب من المدير يبعتلك <b>كود المشاركة</b> من صفحة «المزامنة السحابية»، الصقه هناك ودوس «تطبيق الكود» — أو فعّلوا المزامنة السحابية وهيبتتسحب لوحدها عند الدخول.</div>' +
+      '<div class="tools" style="margin-top:10px">' +
+        '<button class="btn gold sm" type="button" data-gosync>افتح صفحة المزامنة وكود المشاركة</button>' +
+      '</div></div>';
+  } catch (e) { return ''; }
 }
 
 /* ---------- 13) HOME ---------- */
@@ -1096,6 +1190,7 @@ RENDER.home = function () {
   host.innerHTML =
     pageHead('home') +
     coverHTML('home', 'لوحة الإنتاج — نظرة عامة', '', true) +
+    memberEmptyNote('home') +
     '<div class="grid6">' +
       statCard('camera', '#0d9488', ANGLES.length, 'زوايا التصوير') +
       statCard('camera', '#0891b2', PHONES.length, 'عدد الكاميرات') +
@@ -1361,6 +1456,7 @@ RENDER.scripts = function () {
   host.innerHTML =
     pageHead('scripts') +
     coverHTML('scripts', 'سكريبتات الفيديو — Short & Long', '', true) +
+    memberEmptyNote('scripts') +
     '<div class="card no-print"><div class="tools" style="margin:0">' +
       '<span class="chip">عدد السكريبتات: <b id="sCount">' + state.scripts.length + '</b></span>' +
       '<span class="chip mini">الصور تُضغط تلقائي ≈900px · جودة 0.7</span>' +
@@ -1492,6 +1588,7 @@ RENDER.schedule = function () {
   host.innerHTML =
     pageHead('schedule') +
     coverHTML('schedule', 'مواعيد العمل — الجدول الأسبوعي', '', true) +
+    memberEmptyNote('schedule') +
     '<div class="card no-print"><h3><span class="bar"></span>إعدادات ثابتة</h3>' +
       '<div class="csub">دي الإعدادات الافتراضية للأسبوع — الجدول تحت هو التنفيذ الفعلي.</div>' +
       '<div class="grid4">' +
@@ -1941,7 +2038,7 @@ function cloudPull(silent) {
   cloudCall('pull', null, function (err, obj) {
     syncBusy = false;
     if (err) { pullLock = false; setSyncState('err', 'فشل السحب: ' + err); if (!silent) toast('فشل السحب — راجع الإعدادات', true); return; }
-    if (!obj) {
+    if (!obj || !looksLikeData(obj)) {
       pullLock = false; setSyncState('idle', 'السحابة فاضية — ارفع البيانات الأول');
       if (!silent) toast('مفيش بيانات على السحابة لسه');
       return;
@@ -1983,9 +2080,14 @@ function applyShareCode(code) {
     var s = String(code || '').trim();
     if (!s) { toast('الصق كود المشاركة الأول', true); return; }
     var txt = decodeURIComponent(escape(atob(s)));
-    state = normalize(JSON.parse(txt));
+    var o = JSON.parse(txt);
+    if (!looksLikeData(o)) { toast('الكود فاضي أو مش كود BOUSLA', true); return; }
+    var keep = state.sync;
+    state = normalize(o);
+    state.sync = Object.assign(blankState().sync, keep);
     persistMeta();
     if (RENDER[activePage]) RENDER[activePage]();
+    refreshCvIndex(function () { if (activePage === 'team' && RENDER.team) RENDER.team(); });
     toast('تم تطبيق كود المشاركة ✓');
   } catch (e) { toast('كود غير صالح', true); }
 }
@@ -2071,7 +2173,7 @@ RENDER.sync = function () {
         '<button class="btn ghost sm" type="button" data-copygas>نسخ الكود كامل</button>' +
        '</div></div>') : '') +
      '<div class="card no-print"><h3><span class="bar"></span>بديل بدون إعداد: كود المشاركة</h3>' +
-      '<div class="csub">كود نصي واحد فيه كل البيانات — انسخه وابعته لأي حد، وهو يلزقه ويطبّق.</div>' +
+       '<div class="csub">كود نصي واحد فيه كل البيانات (سكريبتات + مواعيد + بنود المونتاج + الأعضاء). المدير يولّده وينسخه ويبعته لأي عضو، والعضو يلزقه هنا ويطبق — ودي أسهل طريقة تخلي العضو يشوف نفس البيانات على جهازه.</div>' +
       '<textarea class="sharecode" id="shareBox" placeholder="الصق كود المشاركة هنا وبعدين دوس «تطبيق الكود»" ' + '' + '></textarea>' +
       '<div class="tools" style="margin-top:11px">' +
         '<button class="btn ghost sm" type="button" data-mkcode>توليد الكود</button>' +
@@ -2131,7 +2233,6 @@ RENDER.sync = function () {
   });
   qsa('[data-applycode]', host).forEach(function (b) {
     b.addEventListener('click', function () {
-      if (!guard()) return;
       var box = $('shareBox');
       applyShareCode(box ? box.value : '');
     });
@@ -2214,6 +2315,7 @@ function importJSON(txt) {
   if (!guard()) return;
   try {
     var o = JSON.parse(String(txt || ''));
+    if (!looksLikeData(o)) { toast('الملف فاضي أو مش نسخة BOUSLA', true); return; }
     var keep = state.sync;
     state = normalize(o);
     state.sync = Object.assign(blankState().sync, keep);
