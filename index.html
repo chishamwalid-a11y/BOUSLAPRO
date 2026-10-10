@@ -610,6 +610,16 @@ function bytes(n) {
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1048576).toFixed(2) + ' MB';
 }
+function lastSavedHm() {
+  try {
+    var t = (state && state.meta) ? state.meta.updatedAt : '';
+    if (!t) return 'الآن';
+    var d = new Date(t);
+    if (isNaN(d.getTime())) return '—';
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  } catch (e) { return '—'; }
+}
 function $(id) { return document.getElementById(id); }
 function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
 
@@ -787,6 +797,20 @@ function commitSave() {
   setSaver(ok ? 'محفوظ ✓' : 'التخزين مقفول — الشغل شغال');
   try { scheduleCloudSync(); } catch (e) { }
 }
+/* Save immediately, even if the debounce timer is still pending
+   (called when the tab is hidden/closed so nothing gets lost). */
+function flushSave() {
+  try {
+    if (saveTmr) { clearTimeout(saveTmr); saveTmr = null; }
+    state.meta.updatedAt = new Date().toISOString();
+    if (lsSet(K_DATA, JSON.stringify(state))) setSaver('محفوظ ✓');
+  } catch (e) { }
+}
+window.addEventListener('beforeunload', flushSave);
+window.addEventListener('pagehide', flushSave);
+document.addEventListener('visibilitychange', function () {
+  try { if (document.visibilityState === 'hidden') flushSave(); } catch (e) { }
+});
 
 /* ---------- 7) IndexedDB (CV files, optional) ---------- */
 var IDB = { db: null, ok: true, err: '' };
@@ -1082,7 +1106,7 @@ RENDER.home = function () {
     '</div>' +
     '<div class="grid4" style="margin-top:16px">' +
       statCard('clock', '#16a34a', totalHours() + ' س', 'إجمالي ساعات المواعيد') +
-      statCard('cloud', '#16a34a', (state.sync.provider ? state.sync.provider : 'بدون'), 'مزوّد المزامنة') +
+      statCard('db', '#16a34a', (state.sync.provider ? 'سحابي + محلي' : 'جوه الموقع'), 'مكان حفظ البيانات') +
       statCard('db', '#1e3a8a', bytes(JSON.stringify(state).length), 'حجم البيانات') +
       statCard('shield', '#f97316', isAdmin() ? 'مدير' : 'عضو', 'صلاحيتك الحالية') +
     '</div>' +
@@ -1998,11 +2022,27 @@ RENDER.sync = function () {
   } else {
     cfg = '<div class="empty">اختار مزوّد من القائمة فوق، وبعدين كمّل بياناته هنا.</div>';
   }
-  var last = s.meta && s.meta.lastSyncOwn ? s.meta.lastSyncOwn : (state.meta.lastSync || '');
+  var last = state.meta.lastSync || '';
+  var adv = !!s.adv;
   host.innerHTML =
     pageHead('sync') +
     coverHTML('sync', 'المزامنة السحابية — بيانات مشتركة لكل الأعضاء', '', true) +
-    '<div class="card no-print"><h3><span class="bar"></span>المزوّد</h3>' +
+    '<div class="card no-print"><h3><span class="bar"></span>الحفظ جوه الموقع</h3>' +
+      '<div class="csub">كل اللي بتكتبه (نصوص، مواعيد، سكريبتات، بنود المونتاج) بيتحفظ تلقائي جوه الموقع نفسه — من غير أي رابط أو حساب خارجي.</div>' +
+      '<div class="grid4">' +
+        '<div class="stat"><div class="si" style="background:#16a34a">' + iconSvg('db', 'i22') + '</div>' +
+          '<div><div class="sv lat">' + (s.provider ? 'سحابي + محلي' : 'جوه الموقع') + '</div><div class="sl">مكان الحفظ</div></div></div>' +
+        '<div class="stat"><div class="si" style="background:#0d9488">' + iconSvg('clock', 'i22') + '</div>' +
+          '<div><div class="sv lat">' + esc(lastSavedHm()) + '</div><div class="sl">آخر حفظ تلقائي</div></div></div>' +
+        '<div class="stat"><div class="si" style="background:#1e3a8a">' + iconSvg('db', 'i22') + '</div>' +
+          '<div><div class="sv lat">' + bytes(JSON.stringify(state).length) + '</div><div class="sl">حجم بياناتك</div></div></div>' +
+        '<div class="stat"><div class="si" style="background:' + (LS_OK ? '#16a34a' : '#e11d48') + '">' + iconSvg('shield', 'i22') + '</div>' +
+          '<div><div class="sv">' + (LS_OK ? 'تمام' : 'مقفول') + '</div><div class="sl">حالة التخزين</div></div></div>' +
+      '</div>' +
+      '<div class="tools" style="margin-top:14px">' +
+        '<button class="btn ghost" type="button" data-adv>' + (adv ? '✕ إخفاء إعداد المزامنة' : '☁️ إعداد مزامنة سحابية (اختياري تماماً)') + '</button>' +
+      '</div></div>' +
+    (adv ? ('<div class="card no-print"><h3><span class="bar"></span>المزوّد</h3>' +
       '<div class="csub">اختار مزوّد واحد بس — وبعدها كل الأعضاء يشوفوا نفس البيانات عند الدخول.</div>' +
       '<div class="grid4">' +
         '<div><label class="f">مزوّد المزامنة</label><select class="inp" id="syProv" ' + roleAttr() + '>' + provOpts + '</select></div>' +
@@ -2029,8 +2069,8 @@ RENDER.sync = function () {
       '<pre class="blk lat" id="gasCode">' + esc(GAS_CODE) + '</pre>' +
       '<div class="tools no-print" style="margin-top:11px">' +
         '<button class="btn ghost sm" type="button" data-copygas>نسخ الكود كامل</button>' +
-      '</div></div>' +
-    '<div class="card no-print"><h3><span class="bar"></span>بديل بدون إعداد: كود المشاركة</h3>' +
+       '</div></div>') : '') +
+     '<div class="card no-print"><h3><span class="bar"></span>بديل بدون إعداد: كود المشاركة</h3>' +
       '<div class="csub">كود نصي واحد فيه كل البيانات — انسخه وابعته لأي حد، وهو يلزقه ويطبّق.</div>' +
       '<textarea class="sharecode" id="shareBox" placeholder="الصق كود المشاركة هنا وبعدين دوس «تطبيق الكود»" ' + '' + '></textarea>' +
       '<div class="tools" style="margin-top:11px">' +
@@ -2049,6 +2089,12 @@ RENDER.sync = function () {
     el.addEventListener('input', function () {
       var m = map[el.getAttribute('data-syk')];
       if (m) { state.sync[m[0]][m[1]] = el.value; save(); }
+    });
+  });
+  qsa('[data-adv]', host).forEach(function (b) {
+    b.addEventListener('click', function () {
+      state.sync.adv = !state.sync.adv;
+      save(true); RENDER.sync();
     });
   });
   qsa('[data-sypush]', host).forEach(function (b) { b.addEventListener('click', function () { cloudPush(false); }); });
