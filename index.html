@@ -148,11 +148,7 @@ label.f{display:block;font-size:12.5px;font-weight:700;color:var(--navy);margin:
 .who .wm{display:flex;flex-direction:column;line-height:1.25}
 .who .wm b{font-size:12.5px}
 .who .wm span{font-size:10px;color:var(--muted)}
-.memberBar{display:none;position:fixed;top:62px;right:var(--side-w);left:0;z-index:54;background:#1e3a8a;color:#fff;
-  padding:8px 18px;font-size:12.5px;font-weight:700}
-.memberBar.on{display:block}
 #content{margin-right:var(--side-w);padding:78px 22px 46px}
-body.role-member #content{padding-top:114px}
 
 /* ==== Pages ==== */
 .page{display:none;animation:fade .18s ease}
@@ -307,9 +303,8 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
   :root{--side-w:0px}
   #sidebar{transform:translateX(100%);transition:transform .22s ease;width:270px;box-shadow:-10px 0 40px rgba(0,0,0,.3)}
   #sidebar.open{transform:none}
-  #topbar{right:0}
-  .memberBar{right:0}
-  #content{margin-right:0}
+   #topbar{right:0}
+   #content{margin-right:0}
   #menuBtn{display:inline-flex}
   #scrim{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:59}
   #scrim.on{display:block}
@@ -354,10 +349,8 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
   textarea.cell,input.cell,select.cell{font-size:16px;min-height:40px}
   .row2{grid-template-columns:1fr}
   #topbar{height:58px;padding:0 12px;gap:9px}
-  #content{padding:70px 14px 44px}
-  body.role-member #content{padding-top:104px}
-  .memberBar{top:58px;padding:7px 14px;font-size:12px}
-  .mem{padding:12px}
+   #content{padding:70px 14px 44px}
+   .mem{padding:12px}
 }
 @media (max-width:560px){
   .grid6,.grid4,.split3{grid-template-columns:1fr 1fr}
@@ -385,7 +378,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
 /* ==== PRINT COVERS ==== */
 .print-cover{display:none}
 @media print{
-  #sidebar,#topbar,.memberBar,#toast,#menuBtn,#errBar,#scrim,.no-print,#loginScreen{display:none!important}
+  #sidebar,#topbar,#toast,#menuBtn,#errBar,#scrim,.no-print,#loginScreen{display:none!important}
   #app{display:block!important}
   #content{margin:0!important;padding:0!important}
   body{background:#fff!important;font-size:11.5pt}
@@ -532,8 +525,6 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
     </div>
     <button class="btn ghost sm" id="btnLogout" type="button">خروج</button>
   </header>
-
-  <div class="memberBar" id="memberBar">انت داخل كعضو — العرض والطباعة متاحين</div>
 
   <main id="content">
     <section class="page" id="page-home"></section>
@@ -2148,7 +2139,7 @@ RENDER.account = function () {
         '<ul class="ck">' +
           '<li><span class="num">1</span><span>المدراء: <b>أياد الشربيني</b> و <b>هشام وليد</b> — ليهم التعديل الكامل بعد تسجيل الدخول بكلمة المرور.</span></li>' +
           '<li><span class="num">2</span><span>أي اسم تاني بيدخل من زر «دخول كعضو» بدون كلمة مرور.</span></li>' +
-          '<li><span class="num">3</span><span>العضو لو حاول يعدّل: رسالة «🔐 التعديل للمدراء فقط» + تنبيه دائم فوق.</span></li>' +
+          '<li><span class="num">3</span><span>العضو لو حاول يعدّل حاجة مقفولة تظهرله رسالة «🔐 التعديل للمدراء فقط».</span></li>' +
           '<li><span class="num">4</span><span>الجلسة محفوظة في المتصفح لحد ما تدوس خروج أو تبديل المستخدم.</span></li>' +
         '</ul></div>' +
     '</div>' +
@@ -2277,13 +2268,12 @@ function applySession() {
   try {
     var adm = isAdmin();
     if (document.body) document.body.className = adm ? 'role-admin' : 'role-member';
-    var wName = $('whoName'), wRole = $('whoRole'), wAv = $('whoAv'), rb = $('roleBadge'), mb = $('memberBar');
+    var wName = $('whoName'), wRole = $('whoRole'), wAv = $('whoAv'), rb = $('roleBadge');
     var nm = session ? session.name : '—';
     if (wName) wName.textContent = nm;
     if (wRole) wRole.textContent = adm ? 'مدير · تعديل كامل' : 'عضو · عرض فقط';
     if (wAv) wAv.textContent = initials(nm);
     if (rb) { rb.className = 'badge ' + (adm ? 'admin' : 'member'); rb.textContent = adm ? 'مدير' : 'عضو'; }
-    if (mb) mb.className = 'memberBar' + (adm ? '' : ' on');
   } catch (e) { }
 }
 function enterApp(fresh) {
