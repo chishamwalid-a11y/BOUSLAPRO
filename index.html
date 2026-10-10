@@ -235,8 +235,11 @@ tr[data-type="أجازة"] td:first-child{border-inline-start-color:var(--green)
 /* toolbar */
 .tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:13px}
 .tools .sp{flex:1}
-.chips{display:flex;gap:7px;flex-wrap:wrap}
+.chips{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .chip{background:#fff;border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:12px;font-weight:700;color:var(--navy)}
+.ck2{display:flex;align-items:center;gap:9px;font-size:12.5px;font-weight:700;color:var(--navy);cursor:pointer;
+  background:#fff;border:1px solid var(--line);border-radius:11px;padding:9px 13px;line-height:1.7}
+.ck2 input{width:17px;height:17px;flex:none;accent-color:#f59e0b}
 .chip b{color:var(--sect)}
 
 /* script cards */
@@ -528,7 +531,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
         <button class="btn blue" id="lgMember" type="button">دخول كعضو</button>
       </div>
       <div class="hr"></div>
-      <div class="complete">✔️ الملف كامل — الإصدار 15 · 9 صفحات</div>
+      <div class="complete">✔️ الملف كامل — الإصدار 16 · 9 صفحات</div>
     </div>
   </div>
 </div>
@@ -543,7 +546,7 @@ textarea.sharecode{width:100%;min-height:110px;font-family:ui-monospace,Consolas
       <div class="sb-tag lat">PODCAST PRODUCTION SUITE</div>
     </div>
     <nav class="sb-nav" id="nav"></nav>
-    <div class="sb-foot"><span class="dot"></span>الإصدار 15 · 9 صفحات · مزامنة تلقائية</div>
+    <div class="sb-foot"><span class="dot"></span>الإصدار 16 · 9 صفحات · نشر تلقائي</div>
   </aside>
 
   <header id="topbar">
@@ -953,6 +956,7 @@ function commitSave() {
   } catch (e) { ok = false; }
   setSaver(ok ? 'محفوظ ✓' : 'التخزين مقفول — الشغل شغال');
   try { scheduleCloudSync(); } catch (e) { }
+  try { scheduleGhPublish(); } catch (e) { }
 }
 /* Save immediately, even if the debounce timer is still pending
    (called when the tab is hidden/closed so nothing gets lost). */
@@ -1281,6 +1285,21 @@ function bindPublish(root) {
     if (b.__pub) return; b.__pub = 1;
     b.addEventListener('click', function () { publishSite(); });
   });
+  qsa('[data-sharefile]', root || document).forEach(function (b) {
+    if (b.__sf) return; b.__sf = 1;
+    b.addEventListener('click', function () { shareSite(); });
+  });
+  qsa('[data-copydata]', root || document).forEach(function (b) {
+    if (b.__cd) return; b.__cd = 1;
+    b.addEventListener('click', function () { copyText(shareCode(), 'تم نسخ كود البيانات ✓ — ابعته لأي حد يلزقه عنده'); });
+  });
+  qsa('[data-applyhome]', root || document).forEach(function (b) {
+    if (b.__ah) return; b.__ah = 1;
+    b.addEventListener('click', function () {
+      var box = $('homeCode');
+      applyShareCode(box ? box.value : '');
+    });
+  });
   qsa('[data-hardreload]', root || document).forEach(function (b) {
     if (b.__hr) return; b.__hr = 1;
     b.addEventListener('click', function () { hardReload(); });
@@ -1314,8 +1333,12 @@ function publishCard() {
     if (!isAdmin()) {
       return '<div class="card no-print" style="border:1.5px solid #93c5fd;background:#eff6ff">' +
         '<b>إنت داخل كعضو — العرض والطباعة متاحين</b>' +
-        '<div class="mini" style="margin-top:6px">البيانات اللي المدير بيحفظها جوه ملف الموقع بتظهرلك أوتوماتيك. لو لسه مش شايف حاجة، دوس الزر ده عشان تجيب أحدث نسخة من الموقع.</div>' +
-        '<div class="tools" style="margin-top:10px"><button class="btn blue" type="button" data-hardreload="1">🔄 تحديث البيانات من الموقع</button></div></div>';
+        '<div class="mini" style="margin-top:6px">مش شايف السكريبتات ولا المواعيد؟ ده طبيعي: البيانات بتتخزن على الجهاز اللي اتكتبت عليه. الحل: دوس «🔄 تحديث البيانات من الموقع»، ولو لسه فاضية — اطلب من الليدر يبعتلك <b>كود البيانات</b> والصقه في الخانة اللي تحت.</div>' +
+        '<div class="tools" style="margin-top:10px"><button class="btn blue" type="button" data-hardreload="1">🔄 تحديث البيانات من الموقع</button></div>' +
+        '<textarea class="sharecode" id="homeCode" placeholder="الصق كود البيانات هنا (نص طويل بيوصلك من الليدر) وبعدين دوس «تطبيق»" style="margin-top:10px"></textarea>' +
+        '<div class="tools" style="margin-top:9px">' +
+          '<button class="btn gold sm" type="button" data-applyhome="1">✔️ تطبيق الكود وعرض البيانات</button>' +
+        '</div></div>';
     }
     var pending = !seedStamp || (state.meta.updatedAt || '') > seedStamp;
     return '<div class="card no-print" style="border:1.5px solid #f59e0b;background:linear-gradient(135deg,#fffbeb,#fff7ed)">' +
@@ -1325,8 +1348,12 @@ function publishCard() {
         : '✔️ الملف اللي هترفعه فيه آخر نسخة من بياناتك بالفعل.') + '</div>' +
       '<div class="tools" style="margin-top:10px">' +
         '<button class="btn gold" type="button" data-publish="1">💾 حفظ في الموقع</button>' +
+        '<button class="btn blue" type="button" data-sharefile="1">📤 شارك الملف</button>' +
+        '<button class="btn ghost" type="button" data-copydata="1">🔗 انسخ كود البيانات</button>' +
+      '</div>' +
+      '<div class="chips" style="margin-top:9px">' +
         '<span class="chip">آخر نسخة جوه الملف: <b class="lat">' + stampTxt(seedStamp) + '</b></span>' +
-        '<span class="chip">آخر تعديل عندك: <b class="lat">' + stampTxt(state.meta && state.meta.updatedAt) + '</b></span>' +
+        '<span class="chip">آخر تعديل عندك: <b class="lat">' + stampTxt(state.meta.updatedAt) + '</b></span>' +
       '</div>' +
       '<div class="mini" style="margin-top:9px"><b>بعد الزر:</b> ارفع ملف <span class="lat">index.html</span> اللي نزل <b>مكان الملف القديم</b> على الاستضافة (GitHub Pages ← Replace file). وساعتها أي عضو يفتح الموقع هيلاقي البودكاست والمحتوى والمواعيد والمونتاج زي ما كتبتهم بالظبط.</div>' +
       '</div>';
@@ -2306,6 +2333,49 @@ function ghPublish(silent) {
     });
   });
 }
+/* ---------- auto-publish: any edit lands on the hosted site by itself ---------- */
+var ghTmr = null;
+function scheduleGhPublish() {
+  try {
+    if (!isAdmin() || !ghReady()) return;
+    var g = state.sync.gh;
+    if (g.auto === false) return;
+    if (g.lastPublish && state.meta.updatedAt && state.meta.updatedAt <= g.lastPublish) return;
+    if (ghTmr) clearTimeout(ghTmr);
+    ghTmr = setTimeout(function () { ghTmr = null; ghPublish(true); }, 12000);
+  } catch (e) { }
+}
+function downloadHtml(html) {
+  try {
+    var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'index.html';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) { } }, 800);
+  } catch (e) { showErr('تعذر تنزيل الملف', e.message); }
+}
+/* share the ready-made file straight to WhatsApp / Drive / anything */
+function shareSite() {
+  if (!guard()) return;
+  var html;
+  try {
+    state.meta.updatedAt = new Date().toISOString();
+    try { lsSet(K_DATA, JSON.stringify(state)); } catch (e) { }
+    html = buildSiteHTML();
+  } catch (e) { showErr('تعذر تجهيز الملف', e.message); return; }
+  try {
+    var file = new File([html], 'index.html', { type: 'text/html' });
+    if (navigator && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'BOUSLA', text: 'ملف BOUSLA — افتحه وهتلاقي كل شغل البودكاست' })
+        .then(function () { seedStamp = state.meta.updatedAt; toast('تم إرسال الملف ✓ — أي حد يفتحه هيشوف شغلك', false, 8000); },
+          function () { downloadHtml(html); });
+      return;
+    }
+  } catch (e) { }
+  downloadHtml(html);
+  toast('الملف اتنزل ✓ — ابعته لأي حد أو ارفعه، وأي جهاز يفتحه هيشوف السكريبتات', false, 9000);
+}
 function httpJSON(url, opts, cb) {
   try {
     if (typeof fetch !== 'function') { cb('المتصفح ده مش بيدعم fetch — استخدم كود المشاركة'); return; }
@@ -2617,6 +2687,10 @@ RENDER.sync = function () {
          '<button class="btn ghost' + (isAdmin() ? '' : ' off') + '" type="button" data-ghtest>اختبار الاتصال بـ GitHub</button>' +
          (s.gh.lastPublish ? '<span class="chip">آخر نشر تلقائي: <b class="lat">' + esc(stampTxt(s.gh.lastPublish)) + '</b></span>' : '') +
        '</div>' +
+       '<div class="chips" style="margin-top:11px">' +
+         '<label class="ck2"><input type="checkbox" id="ghAuto"' + (s.gh.auto === false ? '' : ' checked') + ' ' + roleAttr() + '> ' +
+         '<span>نشر تلقائي: أي تعديل تعمله يترفع لوحده على الموقع بعد 12 ثانية — من غير ما تدوس أي زر</span></label>' +
+       '</div>' +
        '<div class="mini" style="margin-top:9px">التوكن بيتخزن على جهازك بس ومش بيتدمج في الملف المنشور. لو المستودع فيه الصفحة على GitHub Pages، التحديث بيظهر خلال دقيقة تقريبًا.</div>' +
      '</div>' +
      '<div class="card"><h3><span class="bar"></span>Google Apps Script + Drive</h3>' +
@@ -2680,6 +2754,12 @@ RENDER.sync = function () {
       save();
     });
     el.addEventListener('change', function () { startAutoPull(true); });
+  });
+  var gha = $('ghAuto');
+  if (gha) gha.addEventListener('change', function () {
+    state.sync.gh.auto = !!gha.checked;
+    save(true);
+    toast(gha.checked ? 'النشر التلقائي شغال — أي تعديل هيظهر على الموقع لوحده' : 'النشر التلقائي مقفول');
   });
   qsa('[data-ghpush]', host).forEach(function (b) { b.addEventListener('click', function () { ghPublish(false); }); });
   qsa('[data-ghtest]', host).forEach(function (b) { b.addEventListener('click', function () { ghTest(); }); });
@@ -3050,6 +3130,6 @@ if (document.readyState === 'loading') {
 }
 })();
 </script>
-<!-- FILE-COMPLETE :: BOUSLA Podcast Production Suite :: v15 :: 9 pages :: single-file · tolerant login · live auto-sync · GitHub auto-deploy -->
+<!-- FILE-COMPLETE :: BOUSLA Podcast Production Suite :: v16 :: 9 pages :: single-file · auto-publish · auto-sync · share-file · tolerant login -->
 </body>
 </html>
